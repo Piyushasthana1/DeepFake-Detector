@@ -1,3 +1,4 @@
+```python
 import sys
 import os
 
@@ -50,11 +51,18 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 
-# ✅ IMPORTANT: CREATE DB TABLES AT STARTUP (Cloud Run Fix)
-with app.app_context():
-    print("🔥 Creating database tables...")
-    db.create_all()
-    print("✅ Database ready")
+# ---------------- DB INIT FIX (CRITICAL) ---------------- #
+
+def init_db():
+    try:
+        db.create_all()
+    except Exception as e:
+        print("❌ DB INIT ERROR:", str(e))
+
+
+@app.before_request
+def before_request():
+    init_db()
 
 
 # ---------------- MODEL SETUP ---------------- #
@@ -71,7 +79,6 @@ transform = T.Compose([
 feat_extractor = CNNFeatureExtractor().to(device)
 model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
 
-# Safe model loading
 try:
     print("📦 Loading model from:", MODEL_PATH)
 
@@ -218,7 +225,8 @@ def logout():
     return redirect(url_for('login'))
 
 
-# Health check (recommended for Cloud Run)
+# ---------------- HEALTH CHECK ---------------- #
+
 @app.route('/health')
 def health():
     return "OK", 200
@@ -229,3 +237,4 @@ def health():
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     app.run(debug=True)
+```
