@@ -131,14 +131,21 @@ def about():
 @app.route('/register', methods=['GET','POST'])
 def register():
     if request.method == 'POST':
-        user = User(
-            username=request.form['username'],
-            password=request.form['password']
-        )
-        db.session.add(user)
-        db.session.commit()
-        flash("Registered Successfully")
-        return redirect(url_for('login'))
+        try:
+            user = User(
+                username=request.form['username'],
+                password=request.form['password']
+            )
+
+            db.session.add(user)
+            db.session.commit()
+
+            flash("Registered Successfully")
+            return redirect(url_for('login'))
+
+        except Exception as e:
+            print("❌ REGISTER ERROR:", str(e))
+            flash("Registration failed")
 
     return render_template('register.html')
 
@@ -146,16 +153,21 @@ def register():
 @app.route('/login', methods=['GET','POST'])
 def login():
     if request.method == 'POST':
-        user = User.query.filter_by(
-            username=request.form['username'],
-            password=request.form['password']
-        ).first()
+        try:
+            user = User.query.filter_by(
+                username=request.form['username'],
+                password=request.form['password']
+            ).first()
 
-        if user:
-            login_user(user)
-            return redirect(url_for('dashboard'))
-        else:
-            flash("Invalid credentials")
+            if user:
+                login_user(user)
+                return redirect(url_for('dashboard'))
+            else:
+                flash("Invalid credentials")
+
+        except Exception as e:
+            print("❌ LOGIN ERROR:", str(e))
+            flash("Login failed")
 
     return render_template('login.html')
 
