@@ -1,66 +1,58 @@
 import sys
 import os
 
-# Fix import path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from flask import Flask, render_template, redirect, url_for, request, flash
-from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 
 import torch
 import cv2
 import torchvision.transforms as T
 
+from google.cloud import firestore
+
 from src.utils.face_detect import crop_faces_from_frame
 from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
-
-
-# ---------------- PATH SETUP ---------------- #
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
 
 
 # ---------------- APP SETUP ---------------- #
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/users.db'
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-db = SQLAlchemy(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
+db = firestore.Client()
 
-# ---------------- DATABASE ---------------- #
+
+# ---------------- USER ---------------- #
 
 class User(UserMixin):
-    # ❗ Dummy user (no DB dependency)
-    def __init__(self, id=1, username="test_user"):
+    def __init__(self, id, username, password):
         self.id = id
         self.username = username
+        self.password = password
 
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User()
+    doc = db.collection("users").document(user_id).get()
+    if doc.exists:
+        data = doc.to_dict()
+        return User(user_id, data["username"], data["password"])
+    return None
 
 
-# ---------------- AUTO LOGIN ---------------- #
+# ---------------- MODEL ---------------- #
 
-@app.before_request
-def auto_login():
-    if not current_user.is_authenticated:
-        dummy_user = User()
-        login_user(dummy_user)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
 
-
-# ---------------- MODEL SETUP ---------------- #
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -74,24 +66,17 @@ transform = T.Compose([
 feat_extractor = CNNFeatureExtractor().to(device)
 model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
 
-try:
-    print("📦 Loading model from:", MODEL_PATH)
+checkpoint = torch.load(MODEL_PATH, map_location='cpu')
+feat_extractor.load_state_dict(checkpoint['feat_state'])
+model.load_state_dict(checkpoint['model_state'])
 
-    checkpoint = torch.load(MODEL_PATH, map_location='cpu')
+feat_extractor.eval()
+model.eval()
 
-    feat_extractor.load_state_dict(checkpoint['feat_state'])
-    model.load_state_dict(checkpoint['model_state'])
-
-    feat_extractor.eval()
-    model.eval()
-
-    print("✅ Model loaded correctly")
-
-except Exception as e:
-    print("❌ MODEL LOAD ERROR:", str(e))
+print("✅ Model loaded correctly")
 
 
-# ---------------- PREDICTION FUNCTION ---------------- #
+# ---------------- PREDICTION ---------------- #
 
 def predict_video(video_path):
 
@@ -137,25 +122,48 @@ def predict_video(video_path):
 
 @app.route('/')
 def home():
-    return redirect(url_for('dashboard'))
+    return render_template('home.html')
 
 
-@app.route('/about')
-def about():
-    return render_template('about.html')
-
-
-@app.route('/register')
+@app.route('/register', methods=['GET','POST'])
 def register():
-    return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        db.collection("users").document(username).set({
+            "username": username,
+            "password": password
+        })
+
+        flash("Registered Successfully")
+        return redirect(url_for('login'))
+
+    return render_template('register.html')
 
 
-@app.route('/login')
+@app.route('/login', methods=['GET','POST'])
 def login():
-    return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        doc = db.collection("users").document(username).get()
+
+        if doc.exists:
+            data = doc.to_dict()
+
+            if data["password"] == password:
+                user = User(username, username, password)
+                login_user(user)
+                return redirect(url_for('dashboard'))
+
+        flash("Invalid credentials")
+
+    return render_template('login.html')
 
 
-@app.route('/dashboard', methods=['GET', 'POST'])
+@app.route('/dashboard', methods=['GET','POST'])
 @login_required
 def dashboard():
     if request.method == 'POST':
@@ -180,18 +188,16 @@ def dashboard():
 
 
 @app.route('/logout')
+@login_required
 def logout():
-    return redirect(url_for('dashboard'))
+    logout_user()
+    return redirect(url_for('login'))
 
-
-# ---------------- HEALTH CHECK ---------------- #
 
 @app.route('/health')
 def health():
     return "OK", 200
 
-
-# ---------------- RUN ---------------- #
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
