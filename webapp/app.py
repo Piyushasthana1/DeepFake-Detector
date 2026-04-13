@@ -1,4 +1,3 @@
-import sys
 import os
 import uuid
 import sqlite3
@@ -30,7 +29,7 @@ login_manager.init_app(app)
 login_manager.login_view = "login"
 
 
-# ---------------- SQLITE DATABASE ---------------- #
+# ---------------- DATABASE ---------------- #
 
 def init_db():
     conn = sqlite3.connect('users.db')
@@ -83,18 +82,18 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-# ---------------- HF API CONFIG ---------------- #
+# ---------------- HF API ---------------- #
 
 HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
 
 
 def predict_video_api(filepath):
-
     try:
         with open(filepath, "rb") as f:
             response = requests.post(
                 HF_API_URL,
-                files={"data": f}
+                files={"data": f},
+                timeout=60  # 🔥 important
             )
 
         if response.status_code != 200:
@@ -103,11 +102,14 @@ def predict_video_api(filepath):
 
         result = response.json()
 
-        # Gradio response format
+        # Gradio response
         label = result["data"][0]
         confidence = result["data"][1]
 
         return label, confidence
+
+    except requests.exceptions.Timeout:
+        return "TIMEOUT (HF sleeping)", 0
 
     except Exception as e:
         print("REQUEST ERROR:", e)
@@ -194,10 +196,9 @@ def dashboard():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
         file.save(filepath)
 
-        # 🔥 CALL HF API INSTEAD OF LOCAL MODEL
         label, confidence = predict_video_api(filepath)
 
-        # 🔥 delete file
+        # delete file
         if os.path.exists(filepath):
             os.remove(filepath)
 
