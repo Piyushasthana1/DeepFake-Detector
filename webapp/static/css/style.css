@@ -295,3 +295,15 @@ video {
 .flash-msg.success {
     color: green;
 }
+
+
+/* ABOUT PAGE */
+
+.about-list {
+    margin-top: 10px;
+    padding-left: 20px;
+}
+
+.about-list li {
+    margin-bottom: 8px;
+}
