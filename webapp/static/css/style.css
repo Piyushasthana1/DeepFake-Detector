@@ -236,3 +236,62 @@ video {
     background: #1f2937;
     color: white;
 }
+
+
+/* AUTH PAGES */
+
+.auth-container {
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #f4f6f9;
+}
+
+.auth-card {
+    background: white;
+    padding: 30px;
+    width: 350px;
+    border-radius: 12px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+.auth-card h2 {
+    margin-bottom: 10px;
+}
+
+.auth-subtext {
+    color: #6b7280;
+    margin-bottom: 20px;
+}
+
+/* INPUTS */
+.auth-card input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+}
+
+/* FLASH */
+.flash-msg {
+    color: red;
+    margin-top: 10px;
+}
+
+/* LINK */
+.auth-link {
+    margin-top: 15px;
+}
+
+.auth-link a {
+    color: #2563eb;
+    text-decoration: none;
+}
+
+/* SUCCESS MESSAGE */
+.flash-msg.success {
+    color: green;
+}
