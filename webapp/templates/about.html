@@ -1,29 +1,69 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>About</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 
 <body>
 
-<nav class="navbar navbar-dark bg-dark px-4">
-    <a class="navbar-brand" href="/">DeepFake Detector</a>
+<!-- NAVBAR -->
+<nav class="navbar">
+    <div class="logo">DeepFake Detector</div>
+
+    <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/login">Login</a>
+    </div>
 </nav>
 
-<div class="container mt-5">
-    <h2>About Project</h2>
+<!-- MAIN -->
+<div class="container">
 
-    <p>This system detects deepfake videos using:</p>
+    <h1>About This Project</h1>
 
-    <ul>
-        <li>CNN (EfficientNet)</li>
-        <li>LSTM for temporal modeling</li>
-        <li>Attention mechanism</li>
-    </ul>
+    <div class="card">
 
-    <p><strong>Accuracy:</strong> ~95%+</p>
+        <p>
+            This DeepFake Detection System is an AI-powered web application designed to identify
+            manipulated or synthetic videos using advanced deep learning techniques.
+        </p>
+
+        <h3>Technologies Used</h3>
+        <ul class="about-list">
+            <li>Convolutional Neural Networks (CNN - EfficientNet)</li>
+            <li>LSTM for temporal sequence learning</li>
+            <li>Attention Mechanism for feature focus</li>
+            <li>Flask Web Framework</li>
+            <li>Google Cloud Deployment</li>
+        </ul>
+
+        <h3>Key Features</h3>
+        <ul class="about-list">
+            <li>Real-time video analysis</li>
+            <li>Secure user authentication</li>
+            <li>High accuracy deepfake detection (~95%+)</li>
+            <li>Interactive and responsive UI</li>
+        </ul>
+
+        <h3>Project Goal</h3>
+        <p>
+            The goal of this project is to combat misinformation and enhance digital media trust
+            by providing a reliable tool to detect deepfake content.
+        </p>
+
+    </div>
+
 </div>
+
+<!-- FOOTER -->
+<footer class="footer">
+    <p>© 2026 DeepFake Detection System | AI Project</p>
+</footer>
 
 </body>
 </html>
