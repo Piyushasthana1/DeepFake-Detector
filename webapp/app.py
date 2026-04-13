@@ -1,6 +1,10 @@
 import sys
 import os
 import time
+import uuid
+import sqlite3
+
+from werkzeug.utils import secure_filename
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -11,8 +15,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import torch
 import cv2
 import torchvision.transforms as T
-
-from google.cloud import firestore
 
 from src.utils.face_detect import crop_faces_from_frame
 from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
@@ -36,7 +38,25 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
-db = firestore.Client()
+
+# ---------------- SQLITE DATABASE ---------------- #
+
+def init_db():
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT UNIQUE,
+            password TEXT
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+init_db()
 
 
 # ---------------- USER ---------------- #
@@ -50,10 +70,16 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    doc = db.collection("users").document(user_id).get()
-    if doc.exists:
-        data = doc.to_dict()
-        return User(user_id, data["username"], data["password"])
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+
+    c.execute("SELECT * FROM users WHERE id=?", (user_id,))
+    user = c.fetchone()
+
+    conn.close()
+
+    if user:
+        return User(user[0], user[1], user[2])
     return None
 
 
@@ -88,7 +114,7 @@ model.eval()
 print("✅ Model loaded correctly")
 
 
-# ---------------- PREDICTION (OPTIMIZED) ---------------- #
+# ---------------- PREDICTION ---------------- #
 
 def predict_video(video_path):
 
@@ -97,7 +123,7 @@ def predict_video(video_path):
 
     ok, frame = cap.read()
     idx = 0
-    frame_skip = 3   # 🔥 optimization
+    frame_skip = 3
 
     while ok and idx < 24:
         if idx % frame_skip == 0:
@@ -114,7 +140,6 @@ def predict_video(video_path):
     if len(frames) < 2:
         return "NO FACE DETECTED", 0
 
-    # 🔥 limit frames
     frames = frames[:6]
 
     xs = torch.stack([transform(f) for f in frames]).unsqueeze(0).to(device)
@@ -129,7 +154,6 @@ def predict_video(video_path):
         logits, _ = model(feats)
         probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
 
-    # 🔥 free memory
     del xs, feats, logits
 
     label = "FAKE" if probs[1] > probs[0] else "REAL"
@@ -153,12 +177,18 @@ def register():
 
         hashed_password = generate_password_hash(password)
 
-        db.collection("users").document(username).set({
-            "username": username,
-            "password": hashed_password
-        })
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
 
-        flash("Registered Successfully")
+        try:
+            c.execute("INSERT INTO users (id, username, password) VALUES (?, ?, ?)",
+                      (username, username, hashed_password))
+            conn.commit()
+            flash("Registered Successfully")
+        except:
+            flash("Username already exists")
+
+        conn.close()
         return redirect(url_for('login'))
 
     return render_template('register.html')
@@ -170,14 +200,20 @@ def login():
         username = request.form['username']
         password = request.form['password']
 
-        doc = db.collection("users").document(username).get()
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
 
-        if doc.exists:
-            data = doc.to_dict()
+        c.execute("SELECT * FROM users WHERE username=?", (username,))
+        user = c.fetchone()
 
-            if check_password_hash(data["password"], password):
-                user = User(username, username, password)
-                login_user(user)
+        conn.close()
+
+        if user:
+            stored_password = user[2]
+
+            if check_password_hash(stored_password, password):
+                user_obj = User(username, username, stored_password)
+                login_user(user_obj)
                 return redirect(url_for('dashboard'))
 
         flash("Invalid credentials")
@@ -190,9 +226,12 @@ def login():
 def dashboard():
     if request.method == 'POST':
 
-        # 🔥 size check
         if request.content_length > 50 * 1024 * 1024:
             flash("File too large!")
+            return redirect(url_for('dashboard'))
+
+        if 'video' not in request.files:
+            flash("No file part")
             return redirect(url_for('dashboard'))
 
         file = request.files['video']
@@ -205,15 +244,17 @@ def dashboard():
             flash("Invalid file type. Only MP4, AVI, MOV allowed.")
             return redirect(url_for('dashboard'))
 
-        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        filename = secure_filename(file.filename)
+        unique_name = f"{uuid.uuid4().hex}_{filename}"
 
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
         file.save(filepath)
 
-        # 🔥 timeout handling
         start_time = time.time()
 
         label, confidence = predict_video(filepath)
+
+        os.remove(filepath)  # 🔥 cleanup
 
         if time.time() - start_time > 45:
             flash("Processing too slow. Try shorter video.")
@@ -238,6 +279,10 @@ def health():
     return "OK", 200
 
 
+@app.errorhandler(413)
+def too_large(e):
+    return "File too large (Max 50MB)", 413
+
+
 if __name__ == '__main__':
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     app.run(debug=True)
