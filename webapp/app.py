@@ -3,6 +3,7 @@ import os
 import time
 import uuid
 import sqlite3
+import gc
 
 from werkzeug.utils import secure_filename
 
@@ -32,7 +33,7 @@ def allowed_file(filename):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -114,7 +115,7 @@ model.eval()
 print("✅ Model loaded correctly")
 
 
-# ---------------- PREDICTION ---------------- #
+# ---------------- PREDICTION (MEMORY SAFE) ---------------- #
 
 def predict_video(video_path):
 
@@ -123,14 +124,16 @@ def predict_video(video_path):
 
     ok, frame = cap.read()
     idx = 0
-    frame_skip = 3
+    frame_skip = 4  # 🔥 more aggressive skip
 
-    while ok and idx < 24:
+    while ok and idx < 20:
         if idx % frame_skip == 0:
             faces = crop_faces_from_frame(frame)
 
             if len(faces) > 0:
-                frames.append(faces[0])
+                # 🔥 resize early to reduce memory
+                face = cv2.resize(faces[0], (160, 160))
+                frames.append(face)
 
         ok, frame = cap.read()
         idx += 1
@@ -140,24 +143,33 @@ def predict_video(video_path):
     if len(frames) < 2:
         return "NO FACE DETECTED", 0
 
-    frames = frames[:6]
+    # 🔥 reduce frames further
+    frames = frames[:4]
 
-    xs = torch.stack([transform(f) for f in frames]).unsqueeze(0).to(device)
+    try:
+        xs = torch.stack([transform(f) for f in frames]).unsqueeze(0).to(device)
 
-    with torch.no_grad():
-        B, S, C, H, W = xs.shape
-        seqs = xs.view(B * S, C, H, W)
+        with torch.no_grad():
+            B, S, C, H, W = xs.shape
+            seqs = xs.view(B * S, C, H, W)
 
-        feats = feat_extractor(seqs)
-        feats = feats.view(B, S, -1)
+            feats = feat_extractor(seqs)
+            feats = feats.view(B, S, -1)
 
-        logits, _ = model(feats)
-        probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            logits, _ = model(feats)
+            probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
 
-    del xs, feats, logits
+        label = "FAKE" if probs[1] > probs[0] else "REAL"
+        confidence = max(probs) * 100
 
-    label = "FAKE" if probs[1] > probs[0] else "REAL"
-    confidence = max(probs) * 100
+    except Exception as e:
+        print("Error during prediction:", e)
+        return "ERROR", 0
+
+    finally:
+        # 🔥 aggressive cleanup
+        del xs, feats, logits
+        gc.collect()
 
     return label, round(confidence, 2)
 
@@ -254,7 +266,9 @@ def dashboard():
 
         label, confidence = predict_video(filepath)
 
-        os.remove(filepath)  # 🔥 cleanup
+        # 🔥 delete file immediately
+        if os.path.exists(filepath):
+            os.remove(filepath)
 
         if time.time() - start_time > 45:
             flash("Processing too slow. Try shorter video.")
