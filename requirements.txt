@@ -1,12 +1,11 @@
 flask
 flask-login
-flask-sqlalchemy
 torch==2.2.0+cpu
 torchvision==0.17.0+cpu
---extra-index-url https://download.pytorch.org/whl/cpu
 opencv-python
 numpy
 pillow
 gunicorn
 facenet-pytorch
 werkzeug
+--extra-index-url https://download.pytorch.org/whl/cpu
