@@ -3,7 +3,7 @@ flask-login
 torch==2.2.0+cpu
 torchvision==0.17.0+cpu
 opencv-python
-numpy
+numpy==1.26.4
 pillow
 gunicorn
 facenet-pytorch
