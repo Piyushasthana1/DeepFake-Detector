@@ -117,63 +117,82 @@ print("✅ Model loaded")
 
 
 # ---------------- ULTRA-LIGHT PREDICTION ---------------- #
-
 def predict_video(video_path):
 
     cap = cv2.VideoCapture(video_path)
 
-    # 🔥 HARD LIMIT video length
-    if cap.get(cv2.CAP_PROP_FRAME_COUNT) > 80:
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    if total_frames < 10:
         cap.release()
-        return "VIDEO TOO LONG", 0
+        return "VIDEO TOO SHORT", 0
+
+    # 🔥 sample 8 frames evenly
+    num_frames_to_pick = 8
+    frame_indices = [int(i * total_frames / num_frames_to_pick) for i in range(num_frames_to_pick)]
 
     frames = []
-    count = 0
+    current_idx = 0
 
-    ok, frame = cap.read()
-
-    while ok and count < 8:  # 🔥 very few frames
-        faces = crop_faces_from_frame(frame)
-
-        if len(faces) > 0:
-            face = cv2.resize(faces[0], (112, 112))
-            frames.append(face)
-
-            if len(frames) >= 2:  # 🔥 ONLY 2 FRAMES
-                break
-
+    while True:
         ok, frame = cap.read()
-        count += 1
+        if not ok:
+            break
+
+        if current_idx in frame_indices:
+            faces = crop_faces_from_frame(frame)
+
+            if len(faces) > 0:
+                face = faces[0]
+
+                # 🔥 resize
+                face = cv2.resize(face, (112, 112))
+
+                # 🔥 VERY IMPORTANT FIX (BGR → RGB)
+                face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+
+                frames.append(face)
+
+        current_idx += 1
+
+        if len(frames) >= 8:
+            break
 
     cap.release()
 
-    if len(frames) < 2:
+    if len(frames) < 4:
         return "NO FACE DETECTED", 0
 
     try:
         xs = torch.stack([transform(f) for f in frames]).unsqueeze(0)
 
         with torch.no_grad():
-            feats = feat_extractor(xs.view(-1, *xs.shape[2:]))
-            feats = feats.view(1, len(frames), -1)
+            B, S, C, H, W = xs.shape
+
+            seqs = xs.view(B * S, C, H, W)
+
+            feats = feat_extractor(seqs)
+            feats = feats.view(B, S, -1)
 
             logits, _ = model(feats)
+
             probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
 
+        print("DEBUG PROBS:", probs)  # 🔥 debug
+
         label = "FAKE" if probs[1] > probs[0] else "REAL"
-        confidence = max(probs) * 100
+        confidence = float(max(probs) * 100)
 
     except Exception as e:
         print("Prediction Error:", e)
         return "ERROR", 0
 
     finally:
-        # 🔥 aggressive cleanup
+        # 🔥 safe cleanup
         del xs, feats, logits
         gc.collect()
 
     return label, round(confidence, 2)
-
 
 # ---------------- ROUTES ---------------- #
 
