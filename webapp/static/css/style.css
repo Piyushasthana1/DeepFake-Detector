@@ -121,3 +121,49 @@ video {
         padding: 0 15px;
     }
 }
+
+
+/* result.html */
+/* RESULT PAGE */
+
+.result {
+    font-size: 28px;
+    margin: 15px 0;
+}
+
+.real {
+    color: #16a34a;
+}
+
+.fake {
+    color: #dc2626;
+}
+
+.confidence-text {
+    margin-top: 10px;
+    font-size: 16px;
+}
+
+/* PROGRESS BAR */
+.progress-container {
+    width: 100%;
+    background: #e5e7eb;
+    border-radius: 10px;
+    margin: 15px 0;
+    overflow: hidden;
+}
+
+.progress-bar {
+    padding: 10px;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+}
+
+.real-bar {
+    background: #16a34a;
+}
+
+.fake-bar {
+    background: #dc2626;
+}
