@@ -1,13 +1,14 @@
 import os
 import uuid
 import sqlite3
-import requests
-import base64
 
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+
+# ✅ NEW: use gradio_client instead of requests
+from gradio_client import Client
 
 
 # ---------------- CONFIG ---------------- #
@@ -82,46 +83,29 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-# ---------------- HF API ---------------- #
+# ---------------- HF CLIENT ---------------- #
 
-HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
+# ✅ CORRECT way to connect HF space
+client = Client("shivanshuasthana81/deepfake-detector")
 
 
 def predict_video_api(filepath):
     try:
-        with open(filepath, "rb") as f:
-            video_bytes = f.read()
+        # ✅ Direct call (no base64, no requests)
+        result = client.predict(
+            filepath,
+            api_name="/predict"
+        )
 
-        video_base64 = base64.b64encode(video_bytes).decode("utf-8")
+        print("🔍 HF RESULT:", result)
 
-        payload = {
-            "data": [
-                {
-                    "name": os.path.basename(filepath),
-                    "data": f"data:video/mp4;base64,{video_base64}"
-                }
-            ]
-        }
-
-        response = requests.post(HF_API_URL, json=payload, timeout=120)
-
-        if response.status_code != 200:
-            print("❌ API ERROR:", response.text)
-            return "ERROR", 0
-
-        result = response.json()
-        print("🔍 HF RESPONSE:", result)
-
-        if "data" not in result:
-            return "ERROR", 0
-
-        label = result["data"][0]
-        confidence = float(result["data"][1])
+        label = result[0]
+        confidence = float(result[1])
 
         return label, round(confidence, 2)
 
     except Exception as e:
-        print("❌ REQUEST ERROR:", e)
+        print("❌ HF ERROR:", e)
         return "ERROR", 0
 
 
@@ -203,14 +187,21 @@ def dashboard():
             return redirect(url_for('dashboard'))
 
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+        # ✅ avoid filename conflicts
+        unique_name = f"{uuid.uuid4().hex}_{filename}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
+
         file.save(filepath)
 
         print("Uploaded:", filepath)
 
+        # 🔥 CALL HF MODEL
         label, confidence = predict_video_api(filepath)
 
-        os.remove(filepath)
+        # cleanup
+        if os.path.exists(filepath):
+            os.remove(filepath)
 
         return render_template(
             'result.html',
