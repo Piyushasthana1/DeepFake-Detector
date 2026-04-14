@@ -83,17 +83,28 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
+# ---------------- HF CLIENT INIT (OPTIMIZED) ---------------- #
+# ✅ FIXED: Initialize once globally to prevent schema downloads on every request
+try:
+    print("Initializing Hugging Face Client...")
+    hf_client = Client("shivanshuasthana81/deepfake-detector")
+except Exception as e:
+    print("Failed to initialize HF client on startup:", e)
+    hf_client = None
+
+
 # ---------------- HF CALL (FINAL FIXED) ---------------- #
 
 def predict_video_api(filepath):
+    if hf_client is None:
+        return "API OFFLINE", 0
 
     for attempt in range(3):  # 🔁 retry for HF cold start
         try:
-            print(f"🚀 Attempt {attempt+1}: Connecting to HF...")
+            print(f"🚀 Attempt {attempt+1}: Sending to HF...")
 
-            client = Client("shivanshuasthana81/deepfake-detector")
-
-            result = client.predict(
+            # ✅ FIXED: Use the global hf_client
+            result = hf_client.predict(
                 filepath,
                 api_name="/predict"
             )
