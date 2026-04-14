@@ -1,32 +1,35 @@
+import sys
 import os
-import uuid
-import sqlite3
+
+# ✅ FIX IMPORT PATH (VERY IMPORTANT FOR RENDER)
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from flask import Flask, render_template, redirect, url_for, request, flash
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+
 import torch
 import cv2
 import torchvision.transforms as T
-
-from werkzeug.utils import secure_filename
-from flask import Flask, render_template, redirect, url_for, request, flash
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from werkzeug.security import generate_password_hash, check_password_hash
 
 from src.utils.face_detect import crop_faces_from_frame
 from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
 
 
-# ---------------- FILE VALIDATION ---------------- #
+# ---------------- PATH SETUP ---------------- #
 
-ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov'}
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
+
+# ✅ CORRECT MODEL PATH (MATCH YOUR STRUCTURE)
+MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
 
 
 # ---------------- APP SETUP ---------------- #
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
 login_manager = LoginManager()
@@ -35,6 +38,8 @@ login_manager.login_view = "login"
 
 
 # ---------------- DATABASE ---------------- #
+
+import sqlite3
 
 def init_db():
     conn = sqlite3.connect('users.db')
@@ -53,8 +58,6 @@ def init_db():
 
 init_db()
 
-
-# ---------------- USER ---------------- #
 
 class User(UserMixin):
     def __init__(self, id, username, password):
@@ -78,9 +81,9 @@ def load_user(user_id):
     return None
 
 
-# ---------------- MODEL ---------------- #
+# ---------------- MODEL SETUP ---------------- #
 
-device = 'cpu'
+device = 'cpu'  # Render free tier
 
 transform = T.Compose([
     T.Resize((224,224)),
@@ -91,14 +94,16 @@ transform = T.Compose([
 feat_extractor = CNNFeatureExtractor().to(device)
 model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
 
-checkpoint = torch.load("best.pth", map_location=device)
+# ✅ LOAD CORRECT FILE
+checkpoint = torch.load(MODEL_PATH, map_location=device)
+
 feat_extractor.load_state_dict(checkpoint['feat_state'])
 model.load_state_dict(checkpoint['model_state'])
 
 feat_extractor.eval()
 model.eval()
 
-print("✅ Model loaded on Render")
+print("✅ Model loaded correctly on Render")
 
 
 # ---------------- PREDICTION ---------------- #
@@ -112,15 +117,22 @@ def predict_video(video_path):
     idx = 0
 
     while ok and idx < 16:
-        faces = crop_faces_from_frame(frame)
 
-        if len(faces) > 0:
-            frames.append(faces[0])
+        try:
+            faces = crop_faces_from_frame(frame)
+
+            if len(faces) > 0:
+                frames.append(faces[0])
+
+        except Exception as e:
+            print("Face error:", e)
 
         ok, frame = cap.read()
         idx += 1
 
     cap.release()
+
+    print("Frames:", len(frames))
 
     if len(frames) < 2:
         return "NO FACE DETECTED", 0
@@ -137,19 +149,12 @@ def predict_video(video_path):
         logits, _ = model(feats)
         probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
 
+    print("PROBS:", probs)
+
     label = "FAKE" if probs[1] > probs[0] else "REAL"
     confidence = max(probs) * 100
 
     return label, round(confidence, 2)
-
-
-# ---------------- FILE PATH ---------------- #
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
-
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 # ---------------- ROUTES ---------------- #
@@ -167,17 +172,16 @@ def about():
 @app.route('/register', methods=['GET','POST'])
 def register():
     if request.method == 'POST':
+
         username = request.form['username']
         password = request.form['password']
-
-        hashed_password = generate_password_hash(password)
 
         conn = sqlite3.connect('users.db')
         c = conn.cursor()
 
         try:
             c.execute("INSERT INTO users VALUES (?, ?, ?)",
-                      (username, username, hashed_password))
+                      (username, username, password))
             conn.commit()
             flash("Registered Successfully")
         except:
@@ -192,6 +196,7 @@ def register():
 @app.route('/login', methods=['GET','POST'])
 def login():
     if request.method == 'POST':
+
         username = request.form['username']
         password = request.form['password']
 
@@ -203,7 +208,7 @@ def login():
 
         conn.close()
 
-        if user and check_password_hash(user[2], password):
+        if user and user[2] == password:
             login_user(User(user[0], user[1], user[2]))
             return redirect(url_for('dashboard'))
 
@@ -215,19 +220,29 @@ def login():
 @app.route('/dashboard', methods=['GET','POST'])
 @login_required
 def dashboard():
+
     if request.method == 'POST':
 
         file = request.files['video']
 
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if file.filename == '':
+            flash("No file selected")
+            return redirect(url_for('dashboard'))
+
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
         file.save(filepath)
+
+        print("📤 Uploaded:", filepath)
 
         label, confidence = predict_video(filepath)
 
         os.remove(filepath)
 
-        return render_template('result.html', label=label, confidence=confidence)
+        return render_template(
+            'result.html',
+            label=label,
+            confidence=confidence
+        )
 
     return render_template('dashboard.html', username=current_user.username)
 
@@ -239,7 +254,8 @@ def logout():
     return redirect(url_for('login'))
 
 
-# ---------------- MAIN ---------------- #
+# ---------------- RUN ---------------- #
 
 if __name__ == '__main__':
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     app.run(debug=True)
