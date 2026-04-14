@@ -1,13 +1,17 @@
 import os
 import uuid
 import sqlite3
-import requests
+import torch
+import cv2
+import torchvision.transforms as T
 
 from werkzeug.utils import secure_filename
-
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+
+from src.utils.face_detect import crop_faces_from_frame
+from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
 
 
 # ---------------- FILE VALIDATION ---------------- #
@@ -74,6 +78,71 @@ def load_user(user_id):
     return None
 
 
+# ---------------- MODEL ---------------- #
+
+device = 'cpu'
+
+transform = T.Compose([
+    T.Resize((224,224)),
+    T.ToTensor(),
+    T.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
+])
+
+feat_extractor = CNNFeatureExtractor().to(device)
+model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
+
+checkpoint = torch.load("best.pth", map_location=device)
+feat_extractor.load_state_dict(checkpoint['feat_state'])
+model.load_state_dict(checkpoint['model_state'])
+
+feat_extractor.eval()
+model.eval()
+
+print("✅ Model loaded on Render")
+
+
+# ---------------- PREDICTION ---------------- #
+
+def predict_video(video_path):
+
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+
+    ok, frame = cap.read()
+    idx = 0
+
+    while ok and idx < 16:
+        faces = crop_faces_from_frame(frame)
+
+        if len(faces) > 0:
+            frames.append(faces[0])
+
+        ok, frame = cap.read()
+        idx += 1
+
+    cap.release()
+
+    if len(frames) < 2:
+        return "NO FACE DETECTED", 0
+
+    xs = torch.stack([transform(f) for f in frames]).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        B,S,C,H,W = xs.shape
+        seqs = xs.view(B*S, C, H, W)
+
+        feats = feat_extractor(seqs)
+        feats = feats.view(B, S, -1)
+
+        logits, _ = model(feats)
+        probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+
+    label = "FAKE" if probs[1] > probs[0] else "REAL"
+    confidence = max(probs) * 100
+
+    return label, round(confidence, 2)
+
+
 # ---------------- FILE PATH ---------------- #
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -81,48 +150,6 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-
-# ---------------- HF API (FINAL REAL FIX) ---------------- #
-
-HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/predict"
-
-
-def predict_video_api(filepath):
-
-    try:
-        with open(filepath, "rb") as f:
-            response = requests.post(
-                HF_API_URL,
-                files={
-                    "file": (
-                        os.path.basename(filepath),
-                        f,
-                        "video/mp4"
-                    )
-                },
-                timeout=120
-            )
-
-        if response.status_code != 200:
-            print("❌ API ERROR:", response.text)
-            return None, 0
-
-        result = response.json()
-        print("🔍 API RESPONSE:", result)
-
-        # Expected format: {"data": ["FAKE", 85.34]}
-        if "data" not in result or len(result["data"]) < 2:
-            return None, 0
-
-        label = str(result["data"][0])
-        confidence = float(result["data"][1])
-
-        return label, round(confidence, 2)
-
-    except Exception as e:
-        print("❌ REQUEST ERROR:", e)
-        return None, 0
 
 
 # ---------------- ROUTES ---------------- #
@@ -137,7 +164,7 @@ def about():
     return render_template('about.html')
 
 
-@app.route('/register', methods=['GET', 'POST'])
+@app.route('/register', methods=['GET','POST'])
 def register():
     if request.method == 'POST':
         username = request.form['username']
@@ -162,7 +189,7 @@ def register():
     return render_template('register.html')
 
 
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['GET','POST'])
 def login():
     if request.method == 'POST':
         username = request.form['username']
@@ -185,41 +212,20 @@ def login():
     return render_template('login.html')
 
 
-@app.route('/dashboard', methods=['GET', 'POST'])
+@app.route('/dashboard', methods=['GET','POST'])
 @login_required
 def dashboard():
     if request.method == 'POST':
 
-        if 'video' not in request.files:
-            flash("No file uploaded")
-            return redirect(url_for('dashboard'))
-
         file = request.files['video']
 
-        if file.filename == '':
-            flash("No file selected")
-            return redirect(url_for('dashboard'))
-
-        if not allowed_file(file.filename):
-            flash("Invalid file format")
-            return redirect(url_for('dashboard'))
-
         filename = secure_filename(file.filename)
-        unique_name = f"{uuid.uuid4().hex}_{filename}"
-
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
 
-        print("📤 Uploaded:", filepath)
+        label, confidence = predict_video(filepath)
 
-        # 🔥 CALL HF API
-        label, confidence = predict_video_api(filepath)
-
-        if os.path.exists(filepath):
-            os.remove(filepath)
-
-        if label is None:
-            return render_template('result.html', label="ERROR", confidence=0)
+        os.remove(filepath)
 
         return render_template('result.html', label=label, confidence=confidence)
 
@@ -231,16 +237,6 @@ def dashboard():
 def logout():
     logout_user()
     return redirect(url_for('login'))
-
-
-@app.route('/health')
-def health():
-    return "OK", 200
-
-
-@app.errorhandler(413)
-def too_large(e):
-    return "File too large (Max 50MB)", 413
 
 
 # ---------------- MAIN ---------------- #
