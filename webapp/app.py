@@ -88,7 +88,6 @@ def predict_video_api(filepath):
     try:
         print("🚀 Connecting to HF...")
 
-        # ✅ CREATE CLIENT HERE (NOT GLOBAL)
         client = Client("shivanshuasthana81/deepfake-detector")
 
         result = client.predict(
@@ -96,10 +95,29 @@ def predict_video_api(filepath):
             api_name="/predict"
         )
 
-        print("🔍 HF RESULT:", result)
+        print("🔍 RAW RESULT:", result)
 
-        label = result[0]
-        confidence = float(result[1])
+        # ✅ HANDLE ALL CASES
+        if isinstance(result, (list, tuple)):
+
+            # case 1: ['FAKE', 85.34]
+            if len(result) == 2 and isinstance(result[0], str):
+                label = result[0]
+                confidence = float(result[1])
+
+            # case 2: [['FAKE', 85.34]]
+            elif len(result) == 1:
+                label = result[0][0]
+                confidence = float(result[0][1])
+
+            # fallback
+            else:
+                label = str(result)
+                confidence = 0
+
+        else:
+            label = "ERROR"
+            confidence = 0
 
         return label, round(confidence, 2)
 
