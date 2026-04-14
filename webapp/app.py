@@ -7,7 +7,6 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-# ✅ NEW: use gradio_client instead of requests
 from gradio_client import Client
 
 
@@ -83,15 +82,15 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-# ---------------- HF CLIENT ---------------- #
-
-# ✅ CORRECT way to connect HF space
-client = Client("shivanshuasthana81/deepfake-detector")
-
+# ---------------- HF CALL ---------------- #
 
 def predict_video_api(filepath):
     try:
-        # ✅ Direct call (no base64, no requests)
+        print("🚀 Connecting to HF...")
+
+        # ✅ CREATE CLIENT HERE (NOT GLOBAL)
+        client = Client("shivanshuasthana81/deepfake-detector")
+
         result = client.predict(
             filepath,
             api_name="/predict"
@@ -187,19 +186,15 @@ def dashboard():
             return redirect(url_for('dashboard'))
 
         filename = secure_filename(file.filename)
-
-        # ✅ avoid filename conflicts
         unique_name = f"{uuid.uuid4().hex}_{filename}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
 
         file.save(filepath)
 
-        print("Uploaded:", filepath)
+        print("📤 Uploaded:", filepath)
 
-        # 🔥 CALL HF MODEL
         label, confidence = predict_video_api(filepath)
 
-        # cleanup
         if os.path.exists(filepath):
             os.remove(filepath)
 
