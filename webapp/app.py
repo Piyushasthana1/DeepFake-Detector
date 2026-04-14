@@ -1,8 +1,10 @@
-import sys
 import os
+import sys
 
-# ✅ FIX IMPORT PATH (VERY IMPORTANT FOR RENDER)
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# ✅ FORCE ADD PROJECT ROOT TO PATH (RENDER SAFE)
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, ROOT_DIR)
+
 
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -11,6 +13,7 @@ import torch
 import cv2
 import torchvision.transforms as T
 
+# ✅ NOW THIS WILL WORK
 from src.utils.face_detect import crop_faces_from_frame
 from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
 
@@ -18,10 +21,7 @@ from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
 # ---------------- PATH SETUP ---------------- #
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
-
-# ✅ CORRECT MODEL PATH (MATCH YOUR STRUCTURE)
 MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
 
 
@@ -81,9 +81,9 @@ def load_user(user_id):
     return None
 
 
-# ---------------- MODEL SETUP ---------------- #
+# ---------------- MODEL ---------------- #
 
-device = 'cpu'  # Render free tier
+device = 'cpu'
 
 transform = T.Compose([
     T.Resize((224,224)),
@@ -94,7 +94,6 @@ transform = T.Compose([
 feat_extractor = CNNFeatureExtractor().to(device)
 model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
 
-# ✅ LOAD CORRECT FILE
 checkpoint = torch.load(MODEL_PATH, map_location=device)
 
 feat_extractor.load_state_dict(checkpoint['feat_state'])
@@ -117,13 +116,10 @@ def predict_video(video_path):
     idx = 0
 
     while ok and idx < 16:
-
         try:
             faces = crop_faces_from_frame(frame)
-
             if len(faces) > 0:
                 frames.append(faces[0])
-
         except Exception as e:
             print("Face error:", e)
 
@@ -164,59 +160,6 @@ def home():
     return render_template('home.html')
 
 
-@app.route('/about')
-def about():
-    return render_template('about.html')
-
-
-@app.route('/register', methods=['GET','POST'])
-def register():
-    if request.method == 'POST':
-
-        username = request.form['username']
-        password = request.form['password']
-
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-
-        try:
-            c.execute("INSERT INTO users VALUES (?, ?, ?)",
-                      (username, username, password))
-            conn.commit()
-            flash("Registered Successfully")
-        except:
-            flash("Username already exists")
-
-        conn.close()
-        return redirect(url_for('login'))
-
-    return render_template('register.html')
-
-
-@app.route('/login', methods=['GET','POST'])
-def login():
-    if request.method == 'POST':
-
-        username = request.form['username']
-        password = request.form['password']
-
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-
-        c.execute("SELECT * FROM users WHERE username=?", (username,))
-        user = c.fetchone()
-
-        conn.close()
-
-        if user and user[2] == password:
-            login_user(User(user[0], user[1], user[2]))
-            return redirect(url_for('dashboard'))
-
-        flash("Invalid credentials")
-
-    return render_template('login.html')
-
-
 @app.route('/dashboard', methods=['GET','POST'])
 @login_required
 def dashboard():
@@ -225,26 +168,23 @@ def dashboard():
 
         file = request.files['video']
 
-        if file.filename == '':
-            flash("No file selected")
-            return redirect(url_for('dashboard'))
-
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
         file.save(filepath)
-
-        print("📤 Uploaded:", filepath)
 
         label, confidence = predict_video(filepath)
 
         os.remove(filepath)
 
-        return render_template(
-            'result.html',
-            label=label,
-            confidence=confidence
-        )
+        return render_template('result.html', label=label, confidence=confidence)
 
     return render_template('dashboard.html', username=current_user.username)
+
+
+@app.route('/login', methods=['GET','POST'])
+def login():
+    if request.method == 'POST':
+        return redirect(url_for('dashboard'))
+    return render_template('login.html')
 
 
 @app.route('/logout')
